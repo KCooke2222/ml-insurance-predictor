@@ -1,0 +1,7 @@
+[build]
+  base    = "insurance-predictor"
+  command = "npm run build"
+  publish = "insurance-predictor/dist"
+
+[build.environment]
+  VITE_DEMO_MODE = "true"

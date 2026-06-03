@@ -1,0 +1,23 @@
+.claude/
+
+# Python
+ml-backend/venv/
+ml-backend/__pycache__/
+*.pyc
+*.pyo
+
+# Node
+insurance-predictor/node_modules/
+insurance-predictor/dist/
+
+# Environment
+.env
+.env.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/

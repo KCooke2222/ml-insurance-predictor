@@ -1,148 +1,190 @@
 """
-
-This script trains a machine learning model to predict insurance charges based on various features.
-
+Trains a Neural Network and Random Forest to predict insurance charges.
+Run from the repo root: python ml-backend/train_model.py
 """
 
-import pandas as pd # handles the dataset
-import numpy as np # works with arrays
+import json
+import os
+import pandas as pd
+import numpy as np
 import matplotlib.pyplot as plt
-from IPython.display import display # display processed data
-from sklearn.model_selection import train_test_split # splits the dataset into training and testing sets
-from sklearn.preprocessing import StandardScaler # normalizes input data
-from sklearn.ensemble import RandomForestRegressor # ml model
-from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score # analyze model results
-from sklearn.metrics import accuracy_score, classification_report # for performance evaluation
-from sklearn.preprocessing import LabelEncoder # Convert strings to numbers
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler, LabelEncoder
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from tensorflow import keras
 from tensorflow.keras import layers
 from tensorflow.keras.callbacks import EarlyStopping
-import joblib # saves the model and scaler for later use
+import joblib
+
+RESULTS_DIR = "ml-backend/model_results"
+MODEL_DIR = "ml-backend/model"
 
 
-file_path = r"ml-backend\insurance.csv" # path to the dataset
-df = pd.read_csv(file_path)
-# reads the csv file into a dataframe so that we can actually read and preprocess
+def load_data():
+    df = pd.read_csv("ml-backend/insurance.csv")
+    df["charges"] = df["charges"].astype(int)
 
-# Permuation importance (meaure importance of features)
-def permutation_importance_manual(model, X, y, metric=mean_absolute_error, n_repeats=5, random_state=42):
-    np.random.seed(random_state)
-    baseline = metric(y, model.predict(X))
-    importances = []
+    label_encoder = LabelEncoder()
+    for col in ["sex", "region", "smoker"]:
+        df[col] = label_encoder.fit_transform(df[col])
 
-    for i in range(X.shape[1]):
-        scores = []
-        for _ in range(n_repeats):
-            X_permuted = X.copy()
-            shuffled = X_permuted[:, i].copy()
-            np.random.shuffle(shuffled)
-            X_permuted[:, i] = shuffled
-            score = metric(y, model.predict(X_permuted))
-            scores.append(score)
-        mean_score = np.mean(scores)
-        importances.append(mean_score - baseline)
+    X = df.drop("charges", axis=1)
+    y = df["charges"]
+    return X, y
 
-    return np.array(importances)
 
-# Build Keras neural network model
-def build_keras_model():
+def preprocess(X, y):
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    scaler = StandardScaler()
+    X_train_s = scaler.fit_transform(X_train)
+    X_test_s = scaler.transform(X_test)
+    feature_means = X.mean()
+    return X_train_s, X_test_s, y_train, y_test, scaler, feature_means
+
+
+def train_nn(X_train, X_test, y_train, y_test):
     model = keras.Sequential([
-        layers.Input(shape=input_shape),
-        layers.Dense(1024, activation='relu'),
-        #layers.Dropout(0.2),
-        layers.Dense(1024, activation='relu'),
-        layers.Dense(1)
+        layers.Input(shape=[X_train.shape[1]]),
+        layers.Dense(1024, activation="relu"),
+        layers.Dense(1024, activation="relu"),
+        layers.Dense(1),
     ])
-    model.compile(optimizer='adam', loss='mae')
-    return model
+    model.compile(optimizer="adam", loss="mae")
 
-def build_random_forest_model():
-    # train a random forest model
-    model = RandomForestRegressor(n_estimators = 150, random_state=42)
+    early_stop = EarlyStopping(monitor="val_loss", patience=10, restore_best_weights=True)
+    history = model.fit(
+        X_train, y_train,
+        epochs=200, batch_size=64,
+        callbacks=[early_stop],
+        validation_split=0.2,
+        verbose=1,
+    )
+
+    y_pred = model.predict(X_test).flatten()
+    metrics = {
+        "mae": round(float(mean_absolute_error(y_test, y_pred)), 2),
+        "rmse": round(float(np.sqrt(mean_squared_error(y_test, y_pred))), 2),
+        "r2": round(float(r2_score(y_test, y_pred)), 4),
+    }
+    return model, history, metrics
+
+
+def train_rf(X_train, X_test, y_train, y_test):
+    model = RandomForestRegressor(n_estimators=150, random_state=42)
     model.fit(X_train, y_train)
 
-    return model
-
-# Initilializse data
-# Change charges to integer values
-df['charges'] = df['charges'].astype(int)
-
-# Initialize the LabelEncoder
-label_encoder = LabelEncoder()
-
-# Apply LabelEncoder to the relevant columns
-cols_to_fix = ['sex', 'region', 'smoker']
-df[cols_to_fix] = df[cols_to_fix].apply(label_encoder.fit_transform)
-
-# Separate features and labels
-X = df.drop('charges', axis=1)
-y = df['charges']
-
-# Split into training and testing sets
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-
-# Normalize (scale) the feature values
-scaler = StandardScaler()
-X_train = scaler.fit_transform(X_train)
-X_test = scaler.transform(X_test)
-
-feature_means = X.mean()
-
-input_shape = [X_train.shape[1]]
-print("Input shape: {}".format(input_shape))
-
-display(df)
+    y_pred = model.predict(X_test)
+    metrics = {
+        "mae": round(float(mean_absolute_error(y_test, y_pred)), 2),
+        "rmse": round(float(np.sqrt(mean_squared_error(y_test, y_pred))), 2),
+        "r2": round(float(r2_score(y_test, y_pred)), 4),
+    }
+    return model, metrics
 
 
-# Keras model
-early_stop = EarlyStopping(
-    monitor='val_loss', 
-    patience=10, 
-    restore_best_weights=True
-)
-
-model = build_keras_model()
-history = model.fit(X_train, y_train, epochs=200, batch_size=64, callbacks=[early_stop], validation_split=0.2)
-plt.plot(history.history['loss'], label='Train Loss')
-plt.plot(history.history['val_loss'], label='Val Loss')
-plt.legend()
-plt.title("Training Curve")
-plt.show()
+def permutation_importance(model, X_test, y_test, n_repeats=5):
+    baseline = mean_absolute_error(y_test, model.predict(X_test))
+    importances = []
+    rng = np.random.default_rng(42)
+    for i in range(X_test.shape[1]):
+        scores = []
+        for _ in range(n_repeats):
+            X_perm = X_test.copy()
+            X_perm[:, i] = rng.permutation(X_perm[:, i])
+            scores.append(mean_absolute_error(y_test, model.predict(X_perm)))
+        importances.append(np.mean(scores) - baseline)
+    return np.array(importances)
 
 
-# Random forest model
-#model = build_random_forest_model()
+def plot_loss_curve(history, path):
+    fig, ax = plt.subplots(figsize=(8, 5))
+    ax.plot(history.history["loss"], label="Train Loss")
+    ax.plot(history.history["val_loss"], label="Val Loss")
+    ax.set_title("Neural Network Training Curve")
+    ax.set_xlabel("Epoch")
+    ax.set_ylabel("MAE Loss")
+    ax.legend()
+    fig.tight_layout()
+    fig.savefig(path, dpi=150)
+    plt.close(fig)
 
 
+def plot_feature_importance(importances, feature_names, title, path):
+    sorted_idx = np.argsort(importances)
+    fig, ax = plt.subplots(figsize=(8, 5))
+    ax.barh(np.array(feature_names)[sorted_idx], importances[sorted_idx], color="#2563EB")
+    ax.set_xlabel("Mean Increase in MAE (permutation)")
+    ax.set_title(title)
+    fig.tight_layout()
+    fig.savefig(path, dpi=150)
+    plt.close(fig)
 
 
-# Predict on test data
-y_pred = model.predict(X_test)
+def save_artifacts(nn_model, rf_model, scaler, feature_means, feature_names,
+                   nn_metrics, rf_metrics, X_test, y_test):
+    os.makedirs(MODEL_DIR, exist_ok=True)
+    os.makedirs(RESULTS_DIR, exist_ok=True)
 
-# Evaluate model performance
-mae = mean_absolute_error(y_test, y_pred)
-rmse = np.sqrt(mean_squared_error(y_test, y_pred))
-r2 = r2_score(y_test, y_pred)
+    # Models
+    nn_model.save(f"{MODEL_DIR}/model_nn.keras")
+    joblib.dump(rf_model, f"{MODEL_DIR}/model_rf.pkl")
+    joblib.dump(scaler, f"{MODEL_DIR}/scaler.pkl")
+    joblib.dump(feature_means, f"{MODEL_DIR}/feature_means.pkl")
+
+    # Metrics
+    with open(f"{RESULTS_DIR}/metrics.json", "w") as f:
+        json.dump({"nn": nn_metrics, "rf": rf_metrics}, f, indent=2)
+
+    # Scaler params (for JS)
+    with open(f"{RESULTS_DIR}/scaler_params.json", "w") as f:
+        json.dump({
+            "mean": scaler.mean_.tolist(),
+            "scale": scaler.scale_.tolist(),
+            "feature_names": feature_names,
+        }, f, indent=2)
+
+    # Feature means (for JS)
+    with open(f"{RESULTS_DIR}/feature_means.json", "w") as f:
+        json.dump(feature_means.to_dict(), f, indent=2)
+
+    # Feature importance charts
+    nn_imp = permutation_importance(nn_model, X_test, y_test)
+    plot_feature_importance(nn_imp, feature_names, "Neural Network — Feature Importance",
+                            f"{RESULTS_DIR}/nn_feature_importance.png")
+
+    rf_imp = permutation_importance(rf_model, X_test, y_test)
+    plot_feature_importance(rf_imp, feature_names, "Random Forest — Feature Importance",
+                            f"{RESULTS_DIR}/rf_feature_importance.png")
+
+    print("All artifacts saved.")
 
 
+def main():
+    print("Loading data...")
+    X, y = load_data()
+    feature_names = list(X.columns)
 
-print(f"MAE: {mae:.2f}") # MAE (Mean Absolute Error): average difference between predicted and true values
-print(f"RMSE: {rmse:.2f}") # RMSE: like MAE, but penalizes large errors more
-print(f"R²: {r2:.2f}") # R² Score: measures how well your model explains variance (closer to 1 is better)
+    print("Preprocessing...")
+    X_train, X_test, y_train, y_test, scaler, feature_means = preprocess(X, y)
 
-# Get permutation importance
-importances = permutation_importance_manual(model, X_test, y_test)
-sorted_idx = np.argsort(importances)
-plt.figure(figsize=(8, 6))
-plt.barh(np.array(X.columns)[sorted_idx], importances[sorted_idx])
-plt.xlabel("Mean Decrease in MAE")
-plt.title("Permutation Feature Importance")
-plt.tight_layout()
-plt.show()
+    print("Training Neural Network...")
+    nn_model, history, nn_metrics = train_nn(X_train, X_test, y_train, y_test)
+    print(f"  NN  — MAE: {nn_metrics['mae']}, RMSE: {nn_metrics['rmse']}, R²: {nn_metrics['r2']}")
 
-# Save everything
-model.save("ml-backend/model/model_nn.keras") # Keras model
-#joblib.dump(model, "ml-backend/model/model_rf.pkl") # random forest model
-joblib.dump(scaler, "ml-backend/model/scaler.pkl")
-joblib.dump(feature_means, "ml-backend/model/feature_means.pkl")
-print("Training complete, model saved.")
+    os.makedirs(RESULTS_DIR, exist_ok=True)
+    plot_loss_curve(history, f"{RESULTS_DIR}/nn_loss_curve.png")
+
+    print("Training Random Forest...")
+    rf_model, rf_metrics = train_rf(X_train, X_test, y_train, y_test)
+    print(f"  RF  — MAE: {rf_metrics['mae']}, RMSE: {rf_metrics['rmse']}, R²: {rf_metrics['r2']}")
+
+    print("Saving all artifacts...")
+    save_artifacts(nn_model, rf_model, scaler, feature_means, feature_names,
+                   nn_metrics, rf_metrics, X_test, y_test)
+
+    print("Done.")
+
+
+if __name__ == "__main__":
+    main()

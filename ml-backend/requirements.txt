@@ -1,9 +1,9 @@
 pandas
 numpy
 scikit-learn
-ipython
+matplotlib
 flask
 flask-cors
-flask
-matplotlib
-scikeras
+tensorflow
+tensorflowjs
+joblib
